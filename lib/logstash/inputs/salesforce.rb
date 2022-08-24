@@ -94,6 +94,9 @@ class LogStash::Inputs::Salesforce < LogStash::Inputs::Base
   config :sfdc_filters, :validate => :string, :default => ""
   # Setting this to true will convert SFDC's NamedFields__c to named_fields__c
   config :to_underscores, :validate => :boolean, :default => false
+  # Interval to run the command. Value is in seconds. If no interval is given,
+  # this plugin only fetches data once.
+  config :interval, :validate => :number, :required => false, :default => -1
 
   public
   def register
@@ -105,26 +108,45 @@ class LogStash::Inputs::Salesforce < LogStash::Inputs::Base
 
   public
   def run(queue)
-    results = client.query(get_query())
-    if results && results.first
-      results.each do |result|
-        event = LogStash::Event.new()
-        decorate(event)
-        @sfdc_fields.each do |field|
-          field_type = @sfdc_field_types[field]
-          value = result.send(field)
-          event_key = @to_underscores ? underscore(field) : field
-          if not value.nil?
-            case field_type
-            when 'datetime', 'date'
-              event.set(event_key, format_time(value))
-            else
-              event.set(event_key, value)
+    while !stop?
+      start = Time.now
+      results = client.query(get_query())
+      if results && results.first
+        results.each do |result|
+          event = LogStash::Event.new()
+          decorate(event)
+          @sfdc_fields.each do |field|
+            field_type = @sfdc_field_types[field]
+            value = result.send(field)
+            event_key = @to_underscores ? underscore(field) : field
+            if not value.nil?
+              case field_type
+              when 'datetime', 'date'
+                event.set(event_key, format_time(value))
+              else
+                event.set(event_key, value)
+              end
             end
           end
+          queue << event
         end
-        queue << event
       end
+      if @interval == -1
+        break
+      else
+        duration = Time.now - start
+        # Sleep for the remainder of the interval, or 0 if the duration ran
+        # longer than the interval.
+        sleeptime = [0, @interval - duration].max
+        if sleeptime == 0
+            @logger.warn("Execution ran longer than the interval. Skipping sleep.",
+                       :duration => duration,
+                       :interval => @interval)
+        else
+            sleep(sleeptime)
+        end
+      end  # end interval check    
+      Stud.stoppable_sleep(@interval) { stop? }
     end
   end # def run
 
