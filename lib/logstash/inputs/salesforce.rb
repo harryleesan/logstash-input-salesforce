@@ -113,6 +113,7 @@ class LogStash::Inputs::Salesforce < LogStash::Inputs::Base
     while !stop?
       start = Time.now
       results = client.query(get_query())
+      File.write(@query_time_file_path, Time.now.utc.iso8601)
       if results && results.first
         results.each do |result|
           event = LogStash::Event.new()
@@ -149,7 +150,6 @@ class LogStash::Inputs::Salesforce < LogStash::Inputs::Base
         end
       end  # end interval check    
       Stud.stoppable_sleep(@interval) { stop? }
-      File.write(@query_time_file_path, Time.now.utc.iso8601)
     end
   end # def run
 
