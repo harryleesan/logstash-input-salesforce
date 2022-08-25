@@ -112,6 +112,11 @@ class LogStash::Inputs::Salesforce < LogStash::Inputs::Base
   def run(queue)
     while !stop?
       start = Time.now
+      unless File.exist?(@query_time_file_path)
+        out_file = File.new(@query_time_file_path, "w+")
+        out_file.puts(Time.new(Time.now.year).utc.iso8601)
+        out_file.close
+      end
       results = client.query(get_query())
       File.write(@query_time_file_path, Time.now.utc.iso8601)
       if results && results.first
@@ -186,9 +191,6 @@ class LogStash::Inputs::Salesforce < LogStash::Inputs::Base
   private
   def get_query()
     prev_query_time = Time.parse(File.read(@query_time_file_path)).utc.iso8601
-    if prev_query_time.empty?
-      prev_query_time = Time.now.beginning_of_year.utc.iso8601
-    end
     unless @sfdc_filters.empty?
       filter_prev_time_replacement = @sfdc_filters % { :prev_query_time => prev_query_time }
     else
