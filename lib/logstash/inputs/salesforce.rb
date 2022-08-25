@@ -97,6 +97,8 @@ class LogStash::Inputs::Salesforce < LogStash::Inputs::Base
   # Interval to run the command. Value is in seconds. If no interval is given,
   # this plugin only fetches data once.
   config :interval, :validate => :number, :required => false, :default => -1
+  # File path to store the timestamp to set query start time range. Value is in UTC ISO8601 format.
+  config :query_time_file_path, :validate => :string, :required => true
 
   public
   def register
@@ -139,14 +141,15 @@ class LogStash::Inputs::Salesforce < LogStash::Inputs::Base
         # longer than the interval.
         sleeptime = [0, @interval - duration].max
         if sleeptime == 0
-            @logger.warn("Execution ran longer than the interval. Skipping sleep.",
-                       :duration => duration,
-                       :interval => @interval)
+          @logger.warn("Execution ran longer than the interval. Skipping sleep.",
+                      :duration => duration,
+                      :interval => @interval)
         else
-            sleep(sleeptime)
+          sleep(sleeptime)
         end
       end  # end interval check    
       Stud.stoppable_sleep(@interval) { stop? }
+      File.write(@query_time_file_path, Time.now.utc.iso8601)
     end
   end # def run
 
@@ -182,9 +185,19 @@ class LogStash::Inputs::Salesforce < LogStash::Inputs::Base
 
   private
   def get_query()
+    prev_query_time = Time.parse(File.read(@query_time_file_path)).utc.iso8601
+    if prev_query_time.empty?
+      prev_query_time = Time.now.beginning_of_year.utc.iso8601
+    end
+    unless @sfdc_filters.empty?
+      filter_prev_time_replacement = @sfdc_filters % { :prev_query_time => prev_query_time }
+    else
+      filter_prev_time_replacement = ""
+    end
     query = ["SELECT",@sfdc_fields.join(','),
              "FROM",@sfdc_object_name]
-    query << ["WHERE",@sfdc_filters] unless @sfdc_filters.empty?
+    query << ["WHERE", filter_prev_time_replacement] unless filter_prev_time_replacement.empty?
+    # query << "WHERE LoginTime > #{prev_query_time}" unless prev_query_time.empty?
     query << "ORDER BY LastModifiedDate DESC" if @sfdc_fields.include?('LastModifiedDate')
     query_str = query.flatten.join(" ")
     @logger.debug? && @logger.debug("SFDC Query", :query => query_str)
